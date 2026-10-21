@@ -199,14 +199,14 @@ for (i in 1:nrow(trip_ids_to_process)) {
   }
   
   fit1 <- tryCatch({
-    ssm_filter(subset_data, time.step = 0.0167/60, df = 4)
+    ssm_filter(subset_data, time.step = 0.0167/60, df = 4) ## 1 second timestep for RW
   }, error = function(e) {
     message(paste("⚠️ fit1 failed for", target_trip_id, ":", e$message))
     return(NULL)
   })
   
   fit2 <- tryCatch({
-    ssm_filter_crw(subset_data, time.step = 0.0167/60, df = 4)
+    ssm_filter_crw(subset_data, time.step = 0.0167/60, df = 4) ## 1 second timestep for CRW
   }, error = function(e) {
     message(paste("⚠️ fit2 failed for", target_trip_id, ":", e$message))
     return(NULL)
@@ -256,7 +256,7 @@ ssm_df <- bind_rows(lapply(csv_files, function(file) {
 Plot with SSM output joined to raw data
 
 ```{r}
-d6 <- read.csv(here("data", "Nosazeogie_GBBG_movement_L2_highresonly_for_dryad.csv"))
+d6 <- read.csv(here("data", "Nosazeogie__L1_highresolution_GBBG_for_dryad_oneID.csv"))
 
 ##RW: with raw and CI
 
@@ -269,7 +269,7 @@ library(purrr)
 
 # Create output directory if it doesn't exist
 output_dir <- here(
-  "data", "updated PlosOne figures" #plots
+  "data", "plots" 
 )
 
 dir.create(output_dir, showWarnings = FALSE)
@@ -281,7 +281,7 @@ d6 <- d6 %>%
 
 
 plot_data <- d6 %>%
-    filter(id == 23335149) %>% # "211547A17"
+    filter(id == 23335149) %>% 
     dplyr::select(date, id, z_raw, z_fit1, z_fit1.se) %>%
     mutate(
       lower = z_fit1 - (1.96*z_fit1.se),
