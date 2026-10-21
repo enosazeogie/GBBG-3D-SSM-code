@@ -1,0 +1,973 @@
+---
+title: "WEA_habitat_use"
+author: "Esther Nosazeogie"
+date: "2026-10-12"
+output: html_document
+---
+
+data (already subsetted by low speed and height)
+
+```{r}
+library(here)
+library(dplyr)
+library(readr)
+library(tidyr)
+
+d5=read.csv(here("data",
+                    "Nosazeogie_L3_highresolution_GBBG_in_WEA_for_dryad.csv"))
+
+
+```
+
+
+vertical habitat use; flight height in vs out of WEA
+
+```{r}
+## Wilcoxon's tests and paired plots
+
+
+### flight heights
+
+library(dplyr)
+library(tidyr)
+library(janitor)
+
+birds_sorted <- d5 %>%
+  arrange(device_id, z_fit1)
+
+
+
+birds_summary <- birds_sorted %>%
+  group_by(device_id, position) %>%
+  summarise(
+    z_mean   = mean(z_fit1, na.rm = TRUE),
+    z_median = median(z_fit1, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  pivot_wider(
+    names_from = position,
+    values_from = c(z_mean, z_median)
+  ) %>%
+  clean_names()
+
+birds_long_median <- birds_summary %>%
+  select(device_id, starts_with("z_median_")) %>%
+  pivot_longer(
+    cols = starts_with("z_median_"),
+    names_to = "position",
+    names_prefix = "z_median_",
+    values_to = "z_median"
+  )
+
+library(ggplot2)
+
+k=ggplot(birds_long_median, aes(x = position, y = z_median, group = device_id)) +
+  geom_line(color = "gray70", alpha = 0.6) +
+  geom_point(size = 2, color = "steelblue") +
+  theme_minimal() +
+  labs(
+    # title = "Paired plot of median flight height by position",
+    x = NULL,
+    y = "Median flight height (meters)",
+    # title="A."
+  )+
+  scale_x_discrete(labels = c(
+    "in_wind_energy_area" = "In Wind Energy Area",
+    "not_in_wind_energy_area" = "Not in Wind Energy Area"
+  ))+
+  theme_minimal(base_size = 12) +  # increases all base text sizes
+  theme(
+    # axis.text.x = element_text(size = 12, angle = 45, hjust = 1),
+    axis.text.y = element_text(size = 10, family = "serif"),
+    axis.text.x = element_text(size = 10, family = "serif"),
+    axis.title.y = element_text(size = 12, face = "bold", family = "serif"),
+    legend.title = element_text(size = 11, face = "bold", family = "serif"),
+    legend.text = element_text(size = 10, family = "serif"),
+    plot.title = element_text(size = 12, face = "bold", hjust = 0, family = "serif")
+  )
+
+k
+
+```
+
+
+vertical habitat use; time in RHR in vs out of WEA
+
+```{r}
+birds_sorted <- birds_sorted %>%
+  mutate(
+    in_rhr = z_fit1 >= 27 & z_fit1 <= 255
+  )
+
+
+library(dplyr)
+
+birds_rhr <- birds_sorted %>%
+  arrange(device_id, UTC_datetime) %>%
+  group_by(device_id, position) %>%
+  summarise(
+    total_time = sum(time_diff, na.rm = TRUE),
+    rhr_time   = sum(time_diff[in_rhr], na.rm = TRUE),
+    rhr_prop   = rhr_time / total_time,
+    rhr_percent = rhr_prop * 100,
+    .groups = "drop"
+  )
+
+
+
+## put them in a suitable format
+
+
+
+status_wide2 <- birds_rhr %>%
+  select(device_id, position, rhr_prop) %>%   # keep only relevant columns
+  pivot_wider(
+    names_from = position,
+    values_from = rhr_prop
+  ) %>%
+  clean_names()
+
+
+
+## compare 
+wilcox.test(status_wide2$in_wind_energy_area, status_wide2$not_in_wind_energy_area, paired = TRUE)
+
+## paired plot
+
+library(tidyr)
+library(ggplot2)
+
+status_long <- status_wide2 %>%
+  pivot_longer(
+    cols = -device_id,
+    names_to = "position",
+    values_to = "rhr_prop"
+  )
+
+
+
+l=ggplot(status_long, aes(x = position, y = rhr_prop, group = device_id)) +
+  geom_line(color = "gray70", alpha = 0.6) +   # line connecting paired points
+  geom_point(size = 2, color = "steelblue") + # dot for each device
+  theme_minimal() +
+  labs(
+    # title = "Paired plot of RHR proportion by position",
+    x = NULL,
+    y = "Proportion of time in rotor height range",
+    # title="B."
+  )+
+  scale_x_discrete(labels = c(
+    "in_wind_energy_area" = "In Wind Energy Area",
+    "not_in_wind_energy_area" = "Not in Wind Energy Area"
+  ))+
+  theme_minimal(base_size = 18) +  # increases all base text sizes
+  theme(
+    # axis.text.x = element_text(size = 12, angle = 45, hjust = 1),
+    axis.text.y = element_text(size = 10, family = "serif"),
+    axis.text.x = element_text(size = 10, family = "serif"),
+    axis.title.y = element_text(size = 12, face = "bold", family = "serif"),
+    legend.title = element_text(size = 11, face = "bold", family = "serif"),
+    legend.text = element_text(size = 10, family = "serif"),
+    plot.title = element_text(size = 12, face = "bold", hjust = 0, family = "serif")
+  )
+
+l
+
+```
+
+combined plot
+
+```{r}
+
+
+library(patchwork)
+
+
+j <- k + l +
+  plot_annotation(tag_levels = "A") &
+  theme(
+    plot.tag = element_text(face = "bold", size = 12),
+    plot.tag.position = c(0, 1),
+    plot.margin = margin(t = 5, r = 10, b = 10, l = 10),
+    axis.text.x = element_text(
+      angle = 45,
+      hjust = 1,
+      vjust = 1,
+      size = 9
+    )
+  )
+
+j
+
+ggsave(
+  here("data", "updated PlosOne figures",
+       "hr_individual vertical habitat use in vs out.tiff"),
+  j,
+  width = 8,
+  height = 5,
+  units = "in",
+  dpi = 300,
+  compression = "lzw"
+)
+
+
+
+
+```
+
+
+
+Chi-square test and plots
+
+```{r}
+### observed versus expected time in RSA
+
+### Time in WEA vs RSA
+
+
+
+# Remove last NA time_diff per device
+birds_sorted <- birds_sorted %>%
+  filter(!is.na(time_diff))
+
+
+
+# Focus only on in_WEA positions
+in_WEA_summary <- birds_sorted %>%
+  filter(position == "in Wind Energy Area") %>%
+  group_by(device_id, buffer_type) %>%
+  summarise(total_minutes = sum(time_diff), .groups = "drop")
+
+
+
+library(tidyr)
+library(stringr)
+
+# Pivot wider so each id has columns for each buffer_type
+library(sf)
+
+### Time in WEA vs time in RSA table
+
+in_WEA_wide <- in_WEA_summary %>%
+  st_drop_geometry() %>%              # drop sf class, keep just a plain dataframe
+  mutate(buffer_type = str_trim(buffer_type)) %>%
+  select(device_id, buffer_type, total_minutes) %>%
+  group_by(device_id, buffer_type) %>%
+  summarise(total_minutes = sum(total_minutes, na.rm = TRUE), .groups = "drop") %>%
+  pivot_wider(
+    id_cols = device_id,
+    names_from = buffer_type,
+    values_from = total_minutes,
+    values_fill = 0
+  )
+
+
+### p calculation # area(A)/area(B_total);
+library(here)
+library(sf)
+
+
+turbines <- st_read(here("data", "shapefiles", 
+             "uswtdb_V8_2_20251210.shp"))
+
+
+# Subset turbines for one project
+vineyard <- turbines %>%
+  dplyr::filter(p_name == "Vineyard Wind")
+
+plot(st_geometry(vineyard))
+
+
+### vineyard turbine shapefile
+
+
+# Reproject to UTM Zone 18N (in meters because we will calculate distances)
+turbines_proj <- st_transform(vineyard, crs = 26918)
+
+
+## installed turbine buffers
+
+library(tidyr)
+library(ggplot2)
+library(dplyr)
+
+# Merge turbines by farm and year
+turbine_union <- turbines_proj %>%
+  dplyr::group_by(p_name, t_state) %>%
+  dplyr::summarise(geometry = st_union(geometry))
+
+### t_state has no data but apparently, this function needs two columns to group properly
+
+
+
+# Rename the original geometry column to avoid name conflict
+turbine_buffer_clean <- turbine_union
+st_geometry(turbine_buffer_clean) <- "geom_orig"
+
+# Create the two buffer columns, dist is radius
+turbine_buffer_clean <- turbine_buffer_clean %>%
+  mutate(
+    buffer_2200m = st_buffer(geom_orig, dist = 2200),# expected spacing within windfarm, between the turbines
+    buffer_116m = st_buffer(geom_orig, dist = 116)# based on blade length (radius) of 111m + 5m buffer; ie. diameter # of 222 + 10m buffer (Tjornlov 2021)
+  )
+
+# Pivot longer without geometry name conflict
+turbine_buffer_long <- turbine_buffer_clean %>%
+  dplyr::select(p_name, buffer_2200m, buffer_116m) %>%
+  pivot_longer(cols = starts_with("buffer"),
+               names_to = "buffer_type",
+               values_to = "geom") %>%
+  st_as_sf(sf_column_name = "geom")  # explicitly set geometry column
+
+
+# plot(st_geometry(turbine_buffer_long))
+
+
+
+
+
+
+### recalculate buffer area and expected props
+
+
+
+# Separate buffers for the subset
+
+###Cumulative area of turbine swept area --RSA (116m buffer)
+buffer_116m <- turbine_buffer_long %>%
+  filter(buffer_type == "buffer_116m") %>%
+  st_union()
+
+
+
+###Cumulative area of wind energy area --WEA (~2200m buffer)
+buffer_2200m <- turbine_buffer_long %>%
+  filter(buffer_type == "buffer_2200m") %>%
+  st_union()
+
+
+### what % area of WEA is occupied by RSA?
+
+# Calculate areas
+area_116m <- st_area(buffer_116m) %>% as.numeric() ##2028190 m2
+area_2200m <- st_area(buffer_2200m) %>% as.numeric() ##352818447 m2
+
+
+# Percentage
+percent_area <- (area_116m / area_2200m) * 100
+
+cat("Percent area of buffer_116m relative to buffer_2200m:", 
+    round(percent_area, 2), "%\n")
+
+
+
+# Percent area of buffer_116m relative to buffer_2200m: 0.7 %
+
+#########################################################################################################################
+
+
+p <- 0.007  # proportion of WEA buffer area (B) that RSA buffer (A) occupies
+
+##########################################
+
+df <- in_WEA_wide %>%
+  rename(obs_A = `buffer_116m`, obs_B = `buffer_2200m`) %>%
+  mutate(
+    obs_notA = obs_B,
+    exp_A    = obs_B * p,
+    exp_notA = obs_B * (1 - p)
+  )
+
+totals <- df %>%
+  summarise(
+    obs_A    = sum(obs_A, na.rm = TRUE),
+    obs_notA = sum(obs_notA, na.rm = TRUE),
+    exp_A    = sum(exp_A, na.rm = TRUE),
+    exp_notA = sum(exp_notA, na.rm = TRUE)
+  )
+
+totals %>%
+  mutate(
+    obs_prop_A = obs_A / (obs_A + obs_notA),
+    exp_prop_A = exp_A / (exp_A + exp_notA)
+  )
+
+
+chisq.test(
+  x = c(totals$obs_A, totals$obs_notA),
+  p = c(totals$exp_A, totals$exp_notA) / (totals$exp_A + totals$exp_notA),
+  rescale.p = TRUE,
+  correct=TRUE ##yates correction
+)
+
+
+
+
+###  plot
+
+df_prop <- df %>%
+  mutate(Observed = obs_A / (obs_A + obs_notA),
+         Expected = exp_A / (exp_A + exp_notA)) %>%
+  select(device_id, Observed, Expected) %>%
+  pivot_longer(-device_id, names_to = "type", values_to = "proportion")
+
+library(dplyr)
+library(ggplot2)
+
+dodge_width <- 0.9
+
+
+zero_obs <- df_prop %>%
+  dplyr::filter(type == "Observed", proportion == 0)
+
+bar_width <- 0.4
+
+f=ggplot(df_prop, aes(x = as.factor(device_id), y = proportion, fill = type)) +
+  geom_col(position = position_dodge(width = dodge_width)) +
+  
+  # # horizontal lines for zero Observed bars
+  geom_errorbar(
+    data = zero_obs,
+    aes(
+      ymin = 0,
+      ymax = 0.0001
+    ),
+    width = 0.5,  # controls horizontal length of the line (0-1 in discrete units)
+    color = "steelblue",
+    linewidth = 0.5,
+    position = position_nudge(x = 0.25)
+  ) +
+  scale_fill_manual(values = c("Observed" = "steelblue", "Expected" = "orange")) +
+  labs(y = "Proportion of time in the Rotor Swept Area", x = "Individual ID") + #, title = "A."
+  theme_minimal(base_size = 10) +
+  theme(
+    axis.text.x = element_text(size = 11, angle = 45, hjust = 1, family = "serif"),
+    axis.text.y = element_text(size = 11, family = "serif"),
+    axis.title.x = element_text(size = 12, face = "bold", family = "serif"),
+    axis.title.y = element_text(size = 12, face = "bold", family = "serif"),
+    legend.title = element_blank(),
+    legend.text = element_text(size = 12, family = "serif"),
+    legend.key.size = unit(1.1, "cm"),
+    legend.spacing.y = unit(0.5, "cm"),
+    legend.key.width = unit(1.2, "cm"),
+    plot.title = element_text(size = 12, face = "bold", hjust = 0, family = "serif")
+  )
+
+
+# Calculate overall totals
+totals <- df %>%
+  summarise(
+    obs_A = sum(obs_A, na.rm = TRUE),
+    obs_notA = sum(obs_notA, na.rm = TRUE),
+    exp_A = sum(exp_A, na.rm = TRUE),
+    exp_notA = sum(exp_notA, na.rm = TRUE)
+  )
+
+# Compute proportions for Buffer A
+overall_prop <- totals %>%
+  summarise(
+    Observed = obs_A / (obs_A + obs_notA),
+    Expected = exp_A / (exp_A + exp_notA)
+  ) %>%
+  pivot_longer(everything(), names_to = "type", values_to = "proportion")
+
+# Plot
+g=ggplot(overall_prop, aes(x = "", y = proportion, fill = type)) +
+  geom_col(position = "dodge", width = 0.4) +
+  scale_fill_manual(values = c("Observed" = "steelblue", "Expected" = "orange")) +
+  labs(y = "Proportion of time in the Rotor Swept Area", x = "", fill = "") + #, title="B."
+  theme_minimal() +
+  theme(axis.text.x = element_blank()) +
+  geom_text(aes(label = round(proportion, 3)), 
+            position = position_dodge(width = 0.4), vjust = -0.2, size = 5, family = "serif")+
+  theme_minimal(base_size = 10) +  # increases all base text sizes
+  theme(
+    axis.text.x = element_text(size = 10, angle = 45, hjust = 1, family = "serif"),
+    axis.text.y = element_text(size = 10, family = "serif"),
+    axis.title.x = element_text(size = 12, face = "bold", family = "serif"),
+    axis.title.y = element_text(size = 12, face = "bold", family = "serif"),
+    # legend.title = element_text(size = 13, face = "bold"),
+    legend.position = "none", 
+    # legend.text = element_text(size = 12),
+    plot.title = element_text(size = 12, face = "bold", hjust = 0, family = "serif")
+  )
+
+library(patchwork)
+
+
+
+h <- f + g +
+  plot_annotation(tag_levels = "A") &
+  theme(
+    plot.tag = element_text(face = "bold", size = 12),
+    plot.tag.position = c(0, 1),
+    plot.margin = margin(t = 10, r = 10, b = 10, l = 10)
+  )
+
+h
+
+ggsave(
+  here("data", "updated PlosOne figures",
+       "hr-observed vs expected time in RSA.tiff"),
+  h,
+  width = 8,
+  height = 5,
+  units = "in",
+  dpi = 300,
+  compression = "lzw"
+)
+
+
+
+```
+
+
+Time in RSA plot
+
+```{r}
+in_WEA_pct <- in_WEA_wide %>%
+  mutate(
+    pct_116m = (`buffer_116m` / `buffer_2200m`) * 100
+  )
+
+
+
+overall_row <- in_WEA_pct %>%
+  summarise(
+    device_id = "overall",
+    `buffer_116m` = sum(`buffer_116m`, na.rm = TRUE),
+    `buffer_2200m` = sum(`buffer_2200m`, na.rm = TRUE),
+    pct_116m = (`buffer_116m` / `buffer_2200m`) * 100
+  )
+
+
+
+overall_row
+
+
+
+in_WEA_summary2 <- in_WEA_summary %>%
+  group_by(device_id) %>%
+  summarise(
+    in_RSA = sum(
+      total_minutes[buffer_type == "buffer_116m"],
+      na.rm = TRUE
+    ),
+    total_WEA = sum(
+      total_minutes[buffer_type == "buffer_2200m"],
+      na.rm = TRUE
+    ),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    outside_RSA = total_WEA - in_RSA
+  ) %>%
+  select(device_id, in_RSA, outside_RSA) %>%
+  tidyr::pivot_longer(
+    cols = c(in_RSA, outside_RSA),
+    names_to = "buffer_type",
+    values_to = "total_minutes"
+  ) %>%
+  mutate(
+    buffer_type = recode(
+      buffer_type,
+      "in_RSA" = "in RSA",
+      "outside_RSA" = "Outside RSA"
+    )
+  )
+
+
+k=ggplot(in_WEA_summary2, aes(x = as.factor(device_id), y = total_minutes, fill = buffer_type)) +
+  geom_col() +
+  # scale_y_continuous(limits = c(0,100), expand = c(0,0)) +
+  scale_fill_discrete(
+    name = "Buffer Type",  # legend title
+    labels = c("In RSA", "Outside RSA")  # in same order as factor levels
+  ) +
+  labs(
+    x = "Individual ID",
+    y = "Time (in minutes)",
+    # title = "B."
+  ) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))+
+  theme_minimal(base_size = 10) +  # increases all base text sizes
+  theme(
+    axis.text.x = element_text(size = 8, angle = 45, hjust = 1, family = "serif"),
+    axis.text.y = element_text(size = 10, family = "serif"),
+    axis.title.x = element_text(size = 12, face = "bold", family = "serif"),
+    axis.title.y = element_text(size = 12, face = "bold", family = "serif"),
+    legend.title = element_text(size = 11, face = "bold", family = "serif"),
+    legend.text = element_text(size = 10, family = "serif"),
+    plot.title = element_text(size = 20, face = "bold", hjust = 0, family = "serif")
+  )
+
+
+k
+
+
+```
+
+
+Bootstrapping: time in RHR
+
+```{r}
+set.seed(123)
+
+n_sims <- 1000
+
+preds <- d5 %>%
+  select(
+    device_id,
+    id,
+    position,
+    buffer_type,
+    date,
+    time_diff,
+    z_fit1,
+    z_fit1.se
+  ) %>%
+  tidyr::uncount(n_sims, .id = "simulation") %>%
+  mutate(
+    z_sim = rnorm(
+      n(),
+      mean = z_fit1,
+      sd = z_fit1.se
+    ),
+    id_sim = paste0(id, "_", simulation)
+  )
+
+
+
+
+
+
+
+point_summary <- preds %>%
+  group_by(
+    device_id,
+    id,
+    position,
+    buffer_type,
+    date,
+    time_diff
+  ) %>%
+  summarise(
+    z_fit1_mean = mean(z_sim, na.rm = TRUE),
+    z_fit1_lower = quantile(z_sim, 0.025, na.rm = TRUE),
+    z_fit1_upper = quantile(z_sim, 0.975, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+
+rm(point_summary)
+gc()
+
+
+
+```
+
+
+Time in RSA plot
+
+
+```{r}
+library(here)
+library(readr)
+library(dplyr)
+library(lubridate)
+
+p_boot=read.csv(here("data", 
+                    "Nosazeogie_GBBG_in_RHR_WEA_bootstrapped_summary_for_dryad.csv")) 
+# point summary/L3d_highres_bootstrapped_summary
+
+
+p_boot <- p_boot %>%
+  filter(!is.na(time_diff))
+
+# Step 1: Filter to in_WEA only
+in_WEA_RHR1 <- p_boot %>%
+  filter(position == "in Wind Energy Area") %>%
+  dplyr::select(device_id, buffer_type, time_diff, z_fit1_mean, z_fit1_lower, z_fit1_upper)
+
+# Step 2: For each id and buffer_type, calculate:
+#   - total time in buffer
+#   - time in buffer with altitude between 27–255 m
+in_WEA_RHR1_summary <- in_WEA_RHR1 %>%
+  group_by(device_id, buffer_type) %>%
+  summarise(
+    total_minutes = sum(time_diff, na.rm = TRUE),
+    time_in_RHR_mean = sum(time_diff[z_fit1_mean >= 27 & z_fit1_mean <= 255], na.rm = TRUE),
+    time_in_RHR_lci = sum(time_diff[z_fit1_lower >= 27 & z_fit1_lower <= 255], na.rm = TRUE),
+    time_in_RHR_uci = sum(time_diff[z_fit1_upper >= 27 & z_fit1_upper <= 255], na.rm = TRUE),
+    .groups = "drop"
+  )
+
+
+library(sf)
+# Step 3: Pivot wider so both buffer types are side-by-side
+in_WEA_RHR1_wide <- in_WEA_RHR1_summary %>%
+  st_drop_geometry() %>%
+  tidyr::pivot_wider(
+    id_cols = device_id,
+    names_from = buffer_type,
+    values_from = c(
+      total_minutes,
+      time_in_RHR_mean,
+      time_in_RHR_lci,
+      time_in_RHR_uci
+    ),
+    values_fill = 0
+  )
+
+
+
+
+
+# Step 4: Calculate per-id percentages (main table 1)
+
+### using only buffer_2200m since buffers are nested; is this correct? NO
+
+# both buffers used since my interest is in WEA in general
+
+in_WEA_RHR1_pct <- in_WEA_RHR1_wide %>%
+  mutate(
+    # Total time across the two buffers
+    total_time = total_minutes_buffer_2200m, # + total_minutes_buffer_116m
+
+    # Mean estimate
+    time_in_RHR_mean = time_in_RHR_mean_buffer_2200m, # + total_minutes_buffer_116m
+
+    # Lower CI estimate
+    time_in_RHR_lci = time_in_RHR_lci_buffer_2200m, # + total_minutes_buffer_116m
+
+    # Upper CI estimate
+    time_in_RHR_uci = time_in_RHR_uci_buffer_2200m, # + total_minutes_buffer_116m
+
+    # Percent of time in RHR
+    pct_in_RHR_mean = (time_in_RHR_mean / total_time) * 100,
+    pct_in_RHR_lci  = (time_in_RHR_lci / total_time) * 100,
+    pct_in_RHR_uci  = (time_in_RHR_uci / total_time) * 100
+  ) %>%
+  select(
+    device_id,
+    total_time,
+    time_in_RHR_mean,
+    time_in_RHR_lci,
+    time_in_RHR_uci,
+    pct_in_RHR_mean,
+    pct_in_RHR_lci,
+    pct_in_RHR_uci
+  )
+
+
+
+
+# Step 5: Overall percentage across all ids (last row in main table 1)
+overall_RHR1_pct <- in_WEA_RHR1_pct %>%
+  summarise(
+    device_id = "overall",
+    
+    total_time = sum(total_time, na.rm = TRUE),
+    
+    time_in_RHR_mean = sum(time_in_RHR_mean, na.rm = TRUE),
+    time_in_RHR_lci  = sum(time_in_RHR_lci, na.rm = TRUE),
+    time_in_RHR_uci  = sum(time_in_RHR_uci, na.rm = TRUE),
+    
+    pct_in_RHR_mean = (time_in_RHR_mean / total_time) * 100,
+    pct_in_RHR_lci  = (time_in_RHR_lci / total_time) * 100,
+    pct_in_RHR_uci  = (time_in_RHR_uci / total_time) * 100
+  )
+
+
+write.table(overall_RHR1_pct,
+            "clipboard",
+            sep = "\t",
+            row.names = FALSE)
+
+
+### plot
+
+
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(sf)
+
+# Create height categories for mean, lower CI, and upper CI
+time_by_height <- in_WEA_RHR1 %>%
+  st_drop_geometry() %>%
+  filter(buffer_type=="buffer_2200m") %>%
+  mutate(
+    mean_height_category = case_when(
+      z_fit1_mean < 27 ~ "Below RHR",
+      z_fit1_mean >= 27 & z_fit1_mean <= 255 ~ "In RHR",
+      z_fit1_mean > 255 ~ "Above RHR",
+      TRUE ~ "Unknown"
+    ),
+    
+    lci_height_category = case_when(
+      z_fit1_lower < 27 ~ "Below RHR",
+      z_fit1_lower >= 27 & z_fit1_lower <= 255 ~ "In RHR",
+      z_fit1_lower > 255 ~ "Above RHR",
+      TRUE ~ "Unknown"
+    ),
+    
+    uci_height_category = case_when(
+      z_fit1_upper < 27 ~ "Below RHR",
+      z_fit1_upper >= 27 & z_fit1_upper <= 255 ~ "In RHR",
+      z_fit1_upper > 255 ~ "Above RHR",
+      TRUE ~ "Unknown"
+    )
+  ) %>%
+  
+  # Put the three estimates into long format
+  pivot_longer(
+    cols = c(
+      mean_height_category,
+      lci_height_category,
+      uci_height_category
+    ),
+    names_to = "estimate",
+    values_to = "height_category"
+  ) %>%
+  
+  # Sum time within each device, height category, and estimate
+  group_by(device_id, height_category, estimate) %>%
+  summarise(
+    total_minutes = sum(time_diff, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  
+  # Put mean, LCI, and UCI into separate columns
+  pivot_wider(
+    names_from = estimate,
+    values_from = total_minutes,
+    values_fill = 0
+  ) %>%
+  
+  rename(
+    time_mean = mean_height_category,
+    time_lci = lci_height_category,
+    time_uci = uci_height_category)
+
+    
+    
+ ## note that for some device_ids, the above table does not make sense: lower < mean < upper ci is not always true
+# but below, it plots correctly, how?
+    
+    
+    
+    
+    
+    
+q1 <- ggplot(
+  time_by_height,
+  aes(
+    x = factor(device_id),
+    y = time_mean,
+    fill = height_category
+  )
+) +
+  
+  # Side-by-side bars
+  geom_col(
+    position = position_dodge(width = 0.8),
+    width = 0.7
+  ) +
+  
+  # CI error bars
+  geom_errorbar(
+    aes(
+      ymin = time_lci,
+      ymax = time_uci
+    ),
+    position = position_dodge(width = 0.8),
+    width = 0.2
+  ) +
+  
+  labs(
+    x = "Individual ID",
+    y = "Time (in minutes)",
+    fill = "Height Category"
+  ) +
+  
+  scale_fill_manual(
+    values = c(
+      "Below RHR" = "skyblue",
+      "In RHR" = "orange",
+      "Above RHR" = "red"
+    )
+  ) +
+  
+  theme_minimal(base_size = 10) +
+  
+  theme(
+    axis.text.x = element_text(
+      size = 10,
+      angle = 45,
+      hjust = 1, family = "serif"
+    ),
+    axis.text.y = element_text(size = 10, family = "serif"),
+    axis.title.x = element_text(size = 12, face = "bold", family = "serif"),
+    axis.title.y = element_text(size = 12, face = "bold", family = "serif"),
+    legend.title = element_text(size = 11, face = "bold", family = "serif"),
+    legend.text = element_text(size = 10, family = "serif"),
+    plot.title = element_text(
+      size = 5,
+      face = "bold",
+      hjust = 0, family = "serif"
+    )
+  )
+
+q1
+
+```
+
+
+
+
+combined RHR/RSA plot
+
+```{r}
+
+
+library(patchwork)
+
+z <- q1 + k +
+  plot_layout(widths = c(1.5, 1)) +
+  plot_annotation(tag_levels = "A") &
+  theme(
+    plot.tag = element_text(face = "bold", size = 12),
+    plot.tag.position = c(0, 1),
+    plot.margin = margin(t = 5, r = 10, b = 10, l = 10),
+    axis.text.x = element_text(
+      angle = 45,
+      hjust = 1,
+      vjust = 1,
+      size = 8
+    )
+  )
+
+ggsave(
+  here("data", "updated PlosOne figures",
+       "hr_individual time_withuncertainty.tiff"),
+  z,
+  width = 8,
+  height = 5,
+  units = "in",
+  dpi = 300,
+  compression = "lzw"
+)
+
+
+
+
+z
+
+
+
+
+```
+
+

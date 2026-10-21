@@ -1,0 +1,330 @@
+---
+title: "3D SSM"
+author: "Esther Nosazeogie"
+date: "2026-10-07"
+output: html_document
+---
+
+## About:
+
+Code for figure in the manuscript, 'Using State Space Models to improve three-dimensional estimates of great black-backed gull movement in relation to offshore wind development in the Northeast United States' by Nosazeogie et al., under review by Plos ONE
+
+High resolution three-dimensional movement data is provided to demonstrate use of custom three-dimensional state space model code written by Ian Jonsen
+
+
+Figure 3: Example random-walk state space model estimates of flight altitude from high-resolution tracks of great black-backed gulls relative to raw data (black points). Pink shaded areas show 95% confidence intervals of the SSM. Pink shaded area shows the 95% confidence envelope around the SSM-estimated altitudes (red line).
+
+
+Data available in dryad: 
+
+
+PART 1: SSM for high res data (1-120s/1s-2min)
+
+1 sec timestep
+
+(OFFSHORE)
+
+minimum track duration: 120min (2hrs)
+maximum gap in track: 4 mins
+
+
+```{r}
+library(dplyr)
+library(TMB)
+require(tidyverse)
+require(sf)
+library (here)
+
+
+data <- read.csv(here("data","Nosazeogie__L1_highresolution_GBBG_for_dryad_oneID.csv"))
+
+# data <- read.csv(here("data", "L1_Jul25_1-120 sec (high res)_min120min_offshore.csv"))
+
+
+#####NB: when compiling C++ code, make sure the packages: inline, Rcpp and RcppEigen are downloaded and loaded up
+
+
+setwd(here("GBBG-flight-height-SSM-habitat-use-C1","gps_alt_SSM_custom_code"))
+
+# Source the scripts
+source("fn/ssm_filter.R")
+source("fn/ssm_filter_crw.R")
+
+
+```
+
+
+
+
+
+Setting up data for SSM
+
+```{r}
+d=data
+
+names(d) <- tolower(names(d))
+d <- d |>
+  ungroup() |>  # Remove any grouping
+  mutate(lc = "G") |>
+  dplyr::select(id=trip_id, ## SSM is run on each sub-track
+                date=utc_datetime,
+                lc,
+                lon=longitude,
+                lat=latitude,
+                z=altitude_m,
+                hdop) |>
+  filter(lon<0, lat>0) |>
+  mutate(id = as.character(id))
+
+
+## reprojection
+
+prj <- "+proj=merc +units=km +datum=WGS84"
+
+d <- d |>
+  st_as_sf(coords = c("lon", "lat"), crs = 4326) |>
+  st_transform(crs = prj)
+
+dxy <- d |> 
+  st_coordinates() |>
+  as.data.frame() |>
+  rename(x = X, y = Y)
+
+d <- bind_cols(d, dxy) |>
+  dplyr::select(id, date, x, y, z, hdop)
+d$geometry <- NULL
+
+
+```
+
+
+
+SSM loop
+
+```{r}
+###fitting multiple tracks
+
+##to avoid conflicts with the fuction "select"
+select <- dplyr::select
+
+data$device_id=as.character(data$device_id)
+str(d$date)
+d$date <- as.POSIXct(d$date, format="%Y-%m-%d %H:%M:%S", tz="UTC")
+
+library(data.table)
+
+###loop 1 (rw)
+
+### updated resumable loop to rerun the trip_id that was in progress when the session aborted
+# checks for data loss from previous aborts
+
+library(dplyr)
+library(sf)
+
+# STEP 0: Create output folder if it doesn't exist
+ssm_outputs1 <- here("data", "ssm_outputs1")
+dir.create(ssm_outputs1, showWarnings = FALSE, recursive = TRUE)
+
+# STEP 1: Generate unique_combinations
+unique_combinations <- data %>%
+  dplyr::select(device_id, trip_id) %>%
+  distinct()
+
+# STEP 2: Read saved files
+cat("✅ SCRIPT STARTED AND RUNNING FROM THE TOP\n")
+saved_files <- list.files(ssm_outputs1, pattern = "^ssm_\\d+\\.csv$", full.names = TRUE)
+
+cat("🔍 Found saved files:\n")
+print(saved_files)
+
+# Extract trip IDs from filenames
+saved_trip_ids <- gsub(".*ssm_(\\d+)\\.csv", "\\1", saved_files)
+cat("📌 Extracted saved trip_ids:\n")
+print(saved_trip_ids)
+
+# STEP 3: Identify most recent trip (in case it crashed before saving)
+if (length(saved_trip_ids) > 0) {
+  last_saved_file <- saved_files[which.max(file.info(saved_files)$mtime)]
+  last_saved_trip_id <- gsub(".*ssm_(\\d+)\\.csv", "\\1", last_saved_file)
+  message("✅ DEBUG: This block is running. Last file: ", last_saved_file)
+  message("Reprocessing last trip_id in case of crash: ", last_saved_trip_id)
+  
+  # Remove last one to reprocess it
+  saved_trip_ids <- setdiff(saved_trip_ids, last_saved_trip_id)
+} else {
+  last_saved_trip_id <- NULL
+  message("⚠️ No previously saved trip_ids found. Nothing to resume.")
+}
+
+# STEP 4: Create filtered list of trips to process
+saved_trip_ids <- as.character(saved_trip_ids)
+last_saved_trip_id <- if (!is.null(last_saved_trip_id)) as.character(last_saved_trip_id) else NULL
+unique_combinations$trip_id <- as.character(unique_combinations$trip_id)
+
+if (is.null(last_saved_trip_id)) {
+  trip_ids_to_process <- unique_combinations
+} else {
+  trip_ids_to_process <- unique_combinations %>%
+    filter(!(trip_id %in% saved_trip_ids) | trip_id == last_saved_trip_id)
+}
+
+# Diagnostic print
+cat("✅ Total unique trips:", nrow(unique_combinations), "\n")
+cat("📋 Trips to process (including possible crash trip):", nrow(trip_ids_to_process), "\n")
+cat("🧪 First few trip_ids to process:\n")
+print(head(trip_ids_to_process$trip_id))
+
+
+# STEP 5: Loop through each trip and fit the model
+for (i in 1:nrow(trip_ids_to_process)) {
+  target_device_id <- trip_ids_to_process$device_id[i]
+  target_trip_id <- trip_ids_to_process$trip_id[i]
+  out_file <- file.path(
+    ssm_outputs1,
+    paste0("ssm_", target_trip_id, ".csv")
+  )
+  
+  # Fallback safety: skip if file already exists
+  if (file.exists(out_file)) {
+    message("Skipping ", target_trip_id, " — already processed.")
+    next
+  }
+  
+  message(paste("🚀 Processing", i, "of", nrow(trip_ids_to_process), 
+                "- Device:", target_device_id, "Trip:", target_trip_id))
+  
+  subset_data <- subset(d, id == target_trip_id)
+  
+  if (nrow(subset_data) == 0 || any(is.na(subset_data$date))) {
+    message(paste("⛔ Skipping trip", target_trip_id, "— missing or empty data"))
+    next
+  }
+  
+  fit1 <- tryCatch({
+    ssm_filter(subset_data, time.step = 0.0167/60, df = 4)
+  }, error = function(e) {
+    message(paste("⚠️ fit1 failed for", target_trip_id, ":", e$message))
+    return(NULL)
+  })
+  
+  fit2 <- tryCatch({
+    ssm_filter_crw(subset_data, time.step = 0.0167/60, df = 4)
+  }, error = function(e) {
+    message(paste("⚠️ fit2 failed for", target_trip_id, ":", e$message))
+    return(NULL)
+  })
+  
+  if (is.null(fit1) || is.null(fit2)) {
+    message(paste("⛔ Skipping trip", target_trip_id, "— one or both models failed"))
+    next
+  }
+  
+  predicted_values <- fit1$predicted %>%
+    dplyr::select(date, x, y, id) %>%
+    left_join(fit1$predicted %>% dplyr::select(date, z, z.se) %>%
+                rename(z_fit1 = z, z_fit1.se = z.se), by = "date") %>%
+    left_join(fit2$predicted %>% dplyr::select(date, z, z.se) %>%
+                rename(z_fit2 = z, z_fit2.se = z.se), by = "date") %>%
+    dplyr::mutate(device_id = target_device_id, trip_id = target_trip_id)
+  
+  write.csv(predicted_values, file = out_file, row.names = FALSE)
+  
+  # Log progress
+  cat(Sys.time(), "- ✅ Saved trip:", target_trip_id, "\n", file = "ssm_outputs1processing_log.txt", append = TRUE)
+  
+  gc()
+}
+
+#### merging
+csv_files <- list.files(ssm_outputs1, pattern = "\\.csv$", full.names = TRUE)
+
+ssm_df <- bind_rows(lapply(csv_files, function(file) {
+  read.csv(
+    file,
+    colClasses = c(
+      id = "character",
+      device_id = "character",
+      trip_id = "character"
+    )
+  )
+}))
+
+
+
+```
+
+
+
+Plot with SSM output joined to raw data
+
+```{r}
+d6 <- read.csv(here("data", "Nosazeogie_GBBG_movement_L2_highresonly_for_dryad.csv"))
+
+##RW: with raw and CI
+
+####loop
+
+library(dplyr)
+library(ggplot2)
+library(tidyr)
+library(purrr)
+
+# Create output directory if it doesn't exist
+output_dir <- here(
+  "data", "updated PlosOne figures" #plots
+)
+
+dir.create(output_dir, showWarnings = FALSE)
+
+
+d6 <- d6 %>%
+  mutate(date = as.POSIXct(date, format = "%Y-%m-%d %H:%M:%S", tz = "UTC"))
+
+
+
+plot_data <- d6 %>%
+    filter(id == 23335149) %>% # "211547A17"
+    dplyr::select(date, id, z_raw, z_fit1, z_fit1.se) %>%
+    mutate(
+      lower = z_fit1 - (1.96*z_fit1.se),
+      upper = z_fit1 + (1.96*z_fit1.se)
+    )
+  
+  # Plot
+p <- ggplot(plot_data, aes(x = as.POSIXct(date))) +
+    # Raw data as black points
+    geom_point(aes(y = z_raw, group=1), color = "black", alpha = 0.6, size = 0.7) +
+    # Confidence ribbon for RW
+    geom_ribbon(aes(ymin = lower, ymax = upper), fill = "red", alpha = 0.3) +
+    # RW as red line
+    geom_line(aes(y = z_fit1), color = "red", size = 1) +
+    
+    labs(
+      # title = paste("raw (points) vs RW (line)_highres_1sects", track_id),
+      x = "Datetime", y = "Altitude (m)"
+    ) +
+    theme_minimal()+
+    theme(
+      axis.title.x = element_text(size = 12,
+      family = "serif", face = "bold"),
+      axis.title.y = element_text(size = 12,
+      family = "serif", face = "bold"),
+      axis.text.x  = element_text(size = 10,
+      family = "serif"),
+      axis.text.y  = element_text(size = 10,
+      family = "serif")
+    )
+
+print(p)
+
+# Save plot
+
+ggsave(filename = file.path(output_dir, paste0("timeseries_23335149", ".tiff")),
+         plot = p, width = 8, height = 3, dpi = 300)
+
+```
+
+
+
+
+
