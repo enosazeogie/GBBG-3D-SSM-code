@@ -38,8 +38,6 @@ library (here)
 
 data <- read.csv(here("data","Nosazeogie__L1_highresolution_GBBG_for_dryad_oneID.csv"))
 
-# data <- read.csv(here("data", "L1_Jul25_1-120 sec (high res)_min120min_offshore.csv"))
-
 
 #####NB: when compiling C++ code, make sure the packages: inline, Rcpp and RcppEigen are downloaded and loaded up
 
