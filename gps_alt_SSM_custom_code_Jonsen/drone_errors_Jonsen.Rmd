@@ -1,0 +1,140 @@
+---
+title: "Drone - altitude error"
+author: "Jonsen"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r pkgs, message=FALSE}
+require(TMB)
+require(tidyverse)
+require(sf)
+
+## source in SSM-fitting code
+source("fn/ssm_filter.R")
+```
+
+
+### Read drone data sets, removing apparently spurious data sets
+
+```{r data, message=FALSE}
+fs <- list.files("data/drone", pattern = "UAV")
+fs <- fs[-c(3,5,6,9,10)]
+
+dat <- lapply(1:length(fs), function(i) {
+  x <- read_delim(paste0("data/drone/", fs[i]), delim = "\t", skip = 2) 
+  if(nrow(x) > 0) {
+    x |>
+      mutate(date = lubridate::ymd_hms(paste(`#gmt_date`, `gmt_time`), tz="UTC")) |>
+      select(date, 
+             lon=longitude, 
+             lat=latitude, 
+             galt=gps_altitude_m, 
+             lalt = laser_altitude_cm, 
+             num_sats) |>
+      mutate(lon = as.numeric(lon), 
+             lat = as.numeric(lat), 
+             galt = as.numeric(galt), 
+             lalt = as.numeric(lalt)) |>
+      ## convert laser alt from cm to m
+      mutate(lalt = lalt/100) |>
+      ## correct GPS alt for height above geoid
+      mutate(galtc = galt - 51.45) |>
+      mutate(id = i) |>
+      select(id, everything())
+  }
+  }) |> bind_rows() |>
+  filter(date > ISOdate(2013,01,01))
+```
+
+### Calculate raw & corrected GPS altitude errors, removing apparently spurious laser-measured altitudes >= 100 m
+
+```{r errors}
+raw.err <- with(subset(dat, lalt < 100), MASS::fitdistr(galt - lalt, "normal"))
+c.err <- with(subset(dat, lalt < 100), MASS::fitdistr(galtc - lalt, "normal"))
+
+## print mean + sd estimates (in m)
+raw.err
+
+c.err
+```
+
+### Plot error distributions
+
+```{r plots}
+# raw errors
+with(subset(dat, lalt < 100), hist(galt - lalt, breaks = 50))
+abline(v = raw.err$estimate[1], col = 'red')
+
+# geoid-corrected errors
+with(subset(dat, lalt < 100), hist(galtc - lalt, breaks = 50))
+abline(v = c.err$estimate[1], col = 'red')
+```
+
+### Fit an SSM using the drone GPS altitude error SD estimate to a GBBG track
+First, read & structure the tracking data
+```{r gbbg data, message=FALSE}
+## read data sets
+d <- read_csv("data/pre_proc/cleaned_alltags_Mar11_24.csv")
+names(d) <- tolower(names(d))
+
+## clean & restructure data
+d <- d |>
+  mutate(lc = "G") |>
+  select(id=device_id,
+         date=utc_datetime,
+         lc,
+         lon=longitude,
+         lat=latitude,
+         z=altitude_m,
+         hdop) |>
+  filter(lon <0, lat > 0) |>
+  mutate(id = as.character(id))
+
+## convert lat-lon to Mercator projected coordinates (in km)
+prj <- "+proj=merc +units=km +datum=WGS84"
+
+d <- d |>
+  st_as_sf(coords = c("lon", "lat"), crs = 4326) |>
+  st_transform(crs = prj)
+
+dxy <- d |> 
+  st_coordinates() |>
+  as.data.frame() |>
+  rename(x = X, y = Y)
+
+d <- bind_cols(d, dxy) |>
+  select(id, date, x, y, z, hdop)
+d$geometry <- NULL
+```
+
+### Fit SSM with a 20-min time step to Gull 233348
+```{r fit SSM, message=FALSE, warning=FALSE}
+fit <- ssm_filter(subset(d, 
+                         id == 233348),
+                  time.step = 20/60, 
+                  df = 2)
+
+```
+
+### Plot Altitudes
+```{r plot SSM}
+## GPS-measured altitude
+plot(z ~ date, fit$data, ylab = "Altitude (m)")
+
+## GPS-measured altitude, zoomed in
+plot(z ~ date, fit$data, ylim=c(-50, 100), ylab = "Altitude (m)")
+
+## overlay SSM-predicted altitude
+lines(z ~ date, fit$predicted, lwd = 2, col="red")
+```
+
+The SSM predicted altitude (think of this as the average altitude at 20-min intervals) doesn't look too bad at it smooths, perhaps too much, through a lot of the apparent noise in the GPS-measured altitudes. The results aren't as good when fitting to other tracks (not included here). The results seem to be sensitive to choice of time step and variability in the data. 
+
+Finally, there is no accounting for geoid height in the model so it is possible/likely that fits to other tracks could yield negative altitudes. I'm not sure whether a post-processing correction for geoid height will fix all of this. Anyway, you will need to find a way to calculate geoid height at given locations to do this. It is also possible that the correction needs to be applied within the model (much more complicated)....
+
